@@ -515,6 +515,21 @@ impl Model {
         changed
     }
 
+    /// The turn to publish as seen (`herdr.seen`) while the person looks at this agent.
+    /// None while it waits: its background work ends without a new core turn, so
+    /// seeing this turn now would hide that finish from every client.
+    pub fn turn_to_share(&self, address: &str) -> Option<u64> {
+        let a = self.agents.get(address)?;
+        let shareable = a.word.as_deref().is_some_and(|w| w != "waiting");
+        (shareable && a.seen_turn.is_none_or(|s| s < a.turn)).then_some(a.turn)
+    }
+
+    /// Whether a held done alert still holds: the agent is at rest, not
+    /// working, waiting or needing the person again.
+    pub fn still_done(&self, address: &str) -> bool {
+        self.agents.get(address).and_then(|a| a.word.as_deref()).is_some_and(|w| !matches!(w, "working" | "waiting" | "blocked" | "error"))
+    }
+
     /// What the UI shows: working, blocked, waiting (at rest, background work
     /// running), done (finished, unseen), idle, or None (not an agent).
     pub fn status(&self, address: &str) -> Option<&'static str> {
@@ -705,6 +720,44 @@ mod tests {
         m.set_word("t1", Some("done".into()), None, false);
         assert_eq!(m.status("t1"), Some("done"), "unseen once it really finished");
         assert!(priority(Some("working")) > priority(Some("waiting")) && priority(Some("waiting")) > priority(Some("idle")));
+    }
+
+    #[test]
+    fn looking_at_a_waiting_agent_does_not_see_its_finish() {
+        let mut m = model_with_one();
+        m.set_word("t1", Some("working".into()), None, false);
+        m.set_turn("t1", 0, Some(0));
+        // Its turn ends (core turn 1) with background work still running.
+        m.set_word("t1", Some("waiting".into()), None, true);
+        m.set_turn("t1", 1, Some(0));
+        assert_eq!(m.turn_to_share("t1"), None, "watching it wait is not seeing it finish");
+        // The work ends while the person is elsewhere: unread, on every client.
+        m.set_word("t1", Some("done".into()), None, false);
+        assert_eq!(m.status("t1"), Some("done"));
+        assert_eq!(m.turn_to_share("t1"), Some(1), "looking now does see it");
+        m.set_turn("t1", 1, Some(1));
+        assert_eq!(m.status("t1"), Some("idle"));
+        assert_eq!(m.turn_to_share("t1"), None, "already shared");
+    }
+
+    #[test]
+    fn a_done_alert_waits_for_a_late_background_report() {
+        let mut m = model_with_one();
+        // Either order of Claude's own done and the hook's background record.
+        // Record first: never a finish.
+        m.set_word("t1", Some("working".into()), None, false);
+        assert_eq!(Model::alert(Some("working"), Some("waiting"), false), None);
+        // Done first: the alert is held, and dropped once the record turns it into waiting.
+        assert_eq!(Model::alert(Some("working"), Some("done"), false), Some(Alert::Done));
+        m.set_word("t1", Some("done".into()), None, false);
+        assert!(m.still_done("t1"));
+        m.set_word("t1", Some("waiting".into()), None, false);
+        assert!(!m.still_done("t1"), "it went on waiting: no finish to announce");
+        // The real finish rings after the same wait.
+        m.set_word("t1", Some("done".into()), None, false);
+        assert!(m.still_done("t1"));
+        m.set_word("t1", Some("working".into()), None, false);
+        assert!(!m.still_done("t1"), "a new turn started meanwhile");
     }
 
     #[test]

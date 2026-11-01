@@ -257,6 +257,10 @@ fn clone_layout(name: &str, to: &str) -> std::io::Result<()> {
     result
 }
 
+/// How long a finish waits for a late background report before it rings
+/// (the Claude Code hook settles within about a second of the turn's end).
+const DONE_GRACE: std::time::Duration = std::time::Duration::from_millis(1500);
+
 struct Term {
     view: Entity<TerminalView>,
     address: String,
@@ -1499,15 +1503,11 @@ impl AppWindow {
         self.looked.retain(|a, _| looking.contains(a));
         let mut changed = false;
         for addr in looking {
-            let Some(a) = self.model.agents.get(&addr) else { continue };
-            let turn = a.turn;
-            if a.word.is_none() || !self.live.contains_key(&addr) || self.looked.get(&addr) == Some(&turn) {
+            let Some(turn) = self.model.turn_to_share(&addr) else { continue };
+            if !self.live.contains_key(&addr) || self.looked.get(&addr) == Some(&turn) {
                 continue;
             }
             self.looked.insert(addr.clone(), turn);
-            if a.seen_turn.is_some_and(|s| s >= turn) {
-                continue;
-            }
             // Shown as seen now, not after the core's round trip.
             changed |= self.model.set_turn(&addr, turn, Some(turn));
             self.written_seen.insert(addr.clone(), turn);
@@ -1985,7 +1985,11 @@ impl AppWindow {
         // Changes already made before Herdr started aren't news.
         if self.listed_once {
             for (addr, alert, looking) in alerts {
-                self.alert(&addr, alert, looking, window, cx);
+                if alert == model::Alert::Done {
+                    self.hold_done(addr, looking, window, cx);
+                } else {
+                    self.alert(&addr, alert, looking, window, cx);
+                }
             }
         }
         self.track_folders(cx);
@@ -2006,6 +2010,21 @@ impl AppWindow {
     /// Tells the person an agent needs them or finished: Herdr's sounds, and a
     /// toast (drawn by the `toast` mod; click it to go there) unless they're
     /// looking at that agent.
+    /// A finish rings after DONE_GRACE, and only if the agent is still at rest:
+    /// an agent's hook may report its background work just after the agent's own
+    /// `done` (it shows as waiting then, and its real finish rings later).
+    fn hold_done(&mut self, addr: String, looking: bool, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(DONE_GRACE).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.model.still_done(&addr) {
+                    this.alert(&addr, model::Alert::Done, looking, window, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
     fn alert(&mut self, addr: &str, alert: model::Alert, looking: bool, window: &mut Window, cx: &mut Context<Self>) {
         if settings::get().sounds.enabled {
             crate::sound::play(if alert == model::Alert::Blocked { "blocked" } else { "done" });
