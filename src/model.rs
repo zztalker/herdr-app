@@ -57,7 +57,8 @@ pub enum Alert {
 /// What core and the user's attention say about one terminal.
 #[derive(Clone, Debug, Default)]
 pub struct Agent {
-    /// The program's 7501 word (working, idle, done, blocked, error), if it reports.
+    /// The program's 7501 word (working, idle, done, blocked, error), if it reports,
+    /// or `waiting` (see `effective_word`).
     pub word: Option<String>,
     /// The agent's name from its 7501 report (`app`), e.g. "claude-code".
     pub app: Option<String>,
@@ -88,15 +89,28 @@ pub struct Model {
     pub folder_info: HashMap<String, FolderInfo>,
 }
 
-/// Herdr's attention priority: blocked > done > working > idle > nothing.
+/// Herdr's attention priority: blocked > done > working > waiting > idle > nothing.
 pub fn priority(status: Option<&str>) -> u8 {
     match status {
-        Some("blocked") => 4,
-        Some("done") => 3,
-        Some("working") => 2,
+        Some("blocked") => 5,
+        Some("done") => 4,
+        Some("working") => 3,
+        Some("waiting") => 2,
         Some("idle") => 1,
         _ => 0,
     }
+}
+
+/// The word Herdr goes by: the program's own (7501 root record), except that a
+/// program at rest (idle or done) with a record still `working` is `waiting`:
+/// its turn ended, but background work it reports on (a shell, a monitor, a
+/// sub-agent) has not, and it will wake up on its own.
+pub fn effective_word(word: Option<&str>, records: Option<&serde_json::Value>) -> Option<String> {
+    let at_rest = matches!(word, Some("idle" | "done"));
+    let background = records
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|r| r.values().any(|rec| rec.get("state").and_then(serde_json::Value::as_str) == Some("working")));
+    if at_rest && background { Some("waiting".into()) } else { word.map(str::to_owned) }
 }
 
 impl Tab {
@@ -441,9 +455,9 @@ impl Model {
         if a.word == word {
             return false;
         }
-        let was_busy = matches!(a.word.as_deref(), Some("working" | "blocked"));
+        let was_busy = matches!(a.word.as_deref(), Some("working" | "blocked" | "waiting"));
         match word.as_deref() {
-            Some("working" | "blocked") => a.seen = true,
+            Some("working" | "blocked" | "waiting") => a.seen = true,
             // A finish you didn't watch is "done" until you look at it.
             Some(_) if was_busy => a.seen = looking,
             _ => {}
@@ -459,7 +473,7 @@ impl Model {
     /// alerts; finishing alerts only if the person wasn't looking.
     pub fn alert(prev: Option<&str>, new: Option<&str>, looking: bool) -> Option<Alert> {
         let blocked = |w: Option<&str>| matches!(w, Some("blocked" | "error"));
-        let busy = |w: Option<&str>| matches!(w, Some("working" | "blocked" | "error"));
+        let busy = |w: Option<&str>| matches!(w, Some("working" | "blocked" | "error" | "waiting"));
         if blocked(new) && !blocked(prev) {
             Some(Alert::Blocked)
         } else if busy(prev) && new.is_some() && !busy(new) && !looking {
@@ -501,11 +515,13 @@ impl Model {
         changed
     }
 
-    /// What the UI shows: working, blocked, done (finished, unseen), idle, or None (not an agent).
+    /// What the UI shows: working, blocked, waiting (at rest, background work
+    /// running), done (finished, unseen), idle, or None (not an agent).
     pub fn status(&self, address: &str) -> Option<&'static str> {
         let a = self.agents.get(address)?;
         Some(match a.word.as_deref()? {
             "working" => "working",
+            "waiting" => "waiting",
             "blocked" | "error" => "blocked",
             _ if a.seen_turn.map_or(!a.seen, |s| a.turn > s) => "done",
             _ => "idle",
@@ -654,6 +670,41 @@ mod tests {
         assert_eq!(alert(Some("working"), Some("idle"), true), None);
         assert_eq!(alert(None, Some("idle"), false), None);
         assert_eq!(alert(Some("working"), None, false), None);
+    }
+
+    #[test]
+    fn a_rest_with_a_working_record_is_waiting() {
+        let records = serde_json::json!({"bg": {"state": "working"}, "tests": {"state": "done"}});
+        let finished = serde_json::json!({"bg": {"state": "done"}});
+        let word = |w: Option<&str>, r: &serde_json::Value| effective_word(w, Some(r));
+        assert_eq!(word(Some("done"), &records).as_deref(), Some("waiting"));
+        assert_eq!(word(Some("idle"), &records).as_deref(), Some("waiting"));
+        // Its own turn, or needing you, says more than its background work.
+        assert_eq!(word(Some("working"), &records).as_deref(), Some("working"));
+        assert_eq!(word(Some("blocked"), &records).as_deref(), Some("blocked"));
+        assert_eq!(word(Some("error"), &records).as_deref(), Some("error"));
+        assert_eq!(word(Some("done"), &finished).as_deref(), Some("done"));
+        assert_eq!(effective_word(Some("done"), None).as_deref(), Some("done"));
+        assert_eq!(word(None, &records), None, "a program that never said its own word isn't an agent");
+    }
+
+    #[test]
+    fn waiting_is_not_a_finish_until_its_background_work_ends() {
+        let alert = Model::alert;
+        assert_eq!(alert(Some("working"), Some("waiting"), false), None);
+        assert_eq!(alert(Some("waiting"), Some("working"), false), None);
+        assert_eq!(alert(Some("waiting"), Some("done"), false), Some(Alert::Done));
+        assert_eq!(alert(Some("waiting"), Some("idle"), true), None);
+        assert_eq!(alert(Some("waiting"), Some("blocked"), false), Some(Alert::Blocked));
+
+        let mut m = model_with_one();
+        m.set_word("t1", Some("working".into()), None, false);
+        m.set_word("t1", Some("waiting".into()), None, false);
+        assert_eq!(m.status("t1"), Some("waiting"), "not done while its background work runs");
+        assert_eq!(m.rollup(&m.all_addresses()), Some("waiting"));
+        m.set_word("t1", Some("done".into()), None, false);
+        assert_eq!(m.status("t1"), Some("done"), "unseen once it really finished");
+        assert!(priority(Some("working")) > priority(Some("waiting")) && priority(Some("waiting")) > priority(Some("idle")));
     }
 
     #[test]

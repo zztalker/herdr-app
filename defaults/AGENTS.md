@@ -149,8 +149,11 @@ the highlighted line shows where it will land.
   for a space on that machine.
 - **Agents** are terminals whose program reports a status (OSC 7501):
   `working`, `blocked`, `idle`, or `done` = finished while the user wasn't
-  looking (it becomes `idle` once they look). A space's and a tab's
-  status is the most urgent of its agents: blocked > done > working > idle.
+  looking (it becomes `idle` once they look), or `waiting` = its turn ended
+  but background work it reports as a 7501 record (`hc report
+  state=working:id=bg`) still runs; it is not done and wakes up on its own.
+  A space's and a tab's status is the most urgent of its agents:
+  blocked > done > working > waiting > idle.
 - **Sub-agents** are terminals an agent started with `hc run`: the core
   records the starter as `parent` (see `terminals()`). They belong to their
   parent's tab without a pane; the `agents` mod shows them,
@@ -449,7 +452,7 @@ layout or mod from it. Write it from the real files, in this order:
 1. `# Name`, one paragraph of what the person sees, `![Name](preview.png)`.
 2. **What you see:** the regions top to bottom or left to right, their
    sizes, colors and type; what each one shows.
-3. **How it behaves:** every agent status (working, blocked, done, idle)
+3. **How it behaves:** every agent status (working, waiting, blocked, done, idle)
    and how it looks; what clicks, keys and hovers do; what moves.
 4. **Built from:** the layout's node tree and blocks, each mod and its
    `props` roles, the shipped mods it uses, the `herdr` functions and
@@ -907,7 +910,7 @@ All of it is in `herdr.d.ts`. In short:
   (sidebars, bars), surface, popover, raised, hover, selected, border,
   input (a stronger border), foreground, muted, dim, accent,
   accent_foreground, solid and solid_foreground (a primary button),
-  selection, working, blocked, done, idle, unknown, ansi0..15; light and
+  selection, working, waiting, blocked, done, idle, unknown, ansi0..15; light and
   dark themes name the same ones), `settings()` (with `dark`: the
   appearance now), `keys()`, `commands()` (every app
   command, its arguments and what it does), `layouts()` (the layout names).

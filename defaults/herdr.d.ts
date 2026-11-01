@@ -77,7 +77,9 @@ export function playSound(sound: string): null;
  */
 export function run(name: string, args?: Record<string, unknown>): null;
 
-export type Status = "working" | "blocked" | "done" | "idle";
+/** "waiting": its turn ended but background work it reports on (a 7501 record
+ *  still `working`: a shell, a monitor, a sub-agent) runs; it wakes up on its own. */
+export type Status = "working" | "waiting" | "blocked" | "done" | "idle";
 
 /** A named piece of work in a space: shared through that machine's core doc.
  * Remote space/tab/pane ids have a machine/ prefix; labels on that machine omit it.

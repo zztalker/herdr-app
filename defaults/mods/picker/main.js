@@ -108,6 +108,7 @@ export default class Picker extends View {
 
   glyph(t, st) {
     if (st === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900);
+    if (st === "waiting") return svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.waiting ?? t.working).spin(2400);
     return div().w(12).flex_none().text_color(t[st] ?? t.dim).child(st === "idle" ? "○" : st ? "●" : "·");
   }
 

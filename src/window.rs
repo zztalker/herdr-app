@@ -1934,6 +1934,7 @@ impl AppWindow {
             let Some(obj) = t.as_object_mut() else { continue };
             let report = obj.remove("status").unwrap_or(Value::Null);
             let word = report.get("state").cloned().unwrap_or_else(|| if report.is_string() { report.clone() } else { Value::Null });
+            let word = crate::model::effective_word(word.as_str(), obj.get("records")).map_or(Value::Null, Value::String);
             obj.insert("status".into(), word);
             obj.insert("program".into(), program_of(&report, running_argv(obj)));
             obj.insert("report".into(), report);
