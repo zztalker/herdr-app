@@ -1,7 +1,7 @@
 #!/bin/sh
 # Claude Code Stop hook for Herdr: when Claude's turn ends while its own
 # background shells still run, report an OSC 7501 record `bg` as working through
-# `hc report`, so Herdr shows the agent as "waiting" instead of "done". The
+# `hc report`, so Herdr shows the agent as "background-waiting" instead of "done". The
 # record is cleared once Claude's session is idle again.
 #
 # Claude Code has no event for "background shell finished", so a small detached
@@ -10,12 +10,12 @@
 # the previous turn's.
 #
 # Install (~/.claude/settings.json):
-#   "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/path/to/waiting-hook.sh"}]}]}
+#   "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/path/to/background-waiting-hook.sh"}]}]}
 set -u
 [ -n "${HC_TERMINAL_ID:-}" ] || exit 0 # not in a Herdr terminal
 HC=${HERDR_HC:-hc}
 command -v "$HC" >/dev/null 2>&1 || exit 0
-poll=${HERDR_WAITING_POLL:-2}
+poll=${HERDR_BACKGROUND_WAITING_POLL:-2}
 sid=$(jq -r '.session_id // empty' 2>/dev/null)
 [ -n "$sid" ] || exit 0
 # The session's file, by its parsed sessionId (any JSON formatting; unreadable files skipped).
@@ -29,7 +29,7 @@ done
 [ -n "$file" ] || exit 0
 
 state() { jq -r '.status // empty' "$file" 2>/dev/null; }
-lock="${TMPDIR:-/tmp}/herdr-waiting-$(id -u)-$HC_TERMINAL_ID"
+lock="${TMPDIR:-/tmp}/herdr-background-waiting-$(id -u)-$HC_TERMINAL_ID"
 reported="$lock/reported" # present while the bg record is set
 mkdir -p "$lock"
 

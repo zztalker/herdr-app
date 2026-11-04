@@ -1,4 +1,4 @@
-//! integrations/claude-code/waiting-hook.sh against a fake `hc` and a session
+//! integrations/claude-code/background-waiting-hook.sh against a fake `hc` and a session
 //! file the test controls: what it reports, and when.
 #![cfg(unix)]
 
@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-const HOOK: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/integrations/claude-code/waiting-hook.sh");
+const HOOK: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/integrations/claude-code/background-waiting-hook.sh");
 
 struct Claude {
     dir: PathBuf,
@@ -14,7 +14,7 @@ struct Claude {
 
 impl Claude {
     fn new(name: &str) -> Claude {
-        let dir = std::env::temp_dir().join(format!("herdr-waiting-hook-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("herdr-background-waiting-hook-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("sessions")).unwrap();
         // Logs each call, one line per report body.
@@ -37,7 +37,7 @@ impl Claude {
             .arg(HOOK)
             .env("HC_TERMINAL_ID", "t1")
             .env("HERDR_HC", self.dir.join("hc"))
-            .env("HERDR_WAITING_POLL", "0.1")
+            .env("HERDR_BACKGROUND_WAITING_POLL", "0.1")
             .env("CLAUDE_CONFIG_DIR", &self.dir)
             .env("TMPDIR", &self.dir)
             .stdin(Stdio::piped())
@@ -84,7 +84,7 @@ impl Drop for Claude {
 }
 
 fn lock_left(dir: &Path) -> bool {
-    std::fs::read_dir(dir).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("herdr-waiting-"))
+    std::fs::read_dir(dir).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("herdr-background-waiting-"))
 }
 
 #[test]

@@ -2012,7 +2012,7 @@ impl AppWindow {
     /// looking at that agent.
     /// A finish rings after DONE_GRACE, and only if the agent is still at rest:
     /// an agent's hook may report its background work just after the agent's own
-    /// `done` (it shows as waiting then, and its real finish rings later).
+    /// `done` (it shows as background-waiting then, and its real finish rings later).
     fn hold_done(&mut self, addr: String, looking: bool, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(DONE_GRACE).await;

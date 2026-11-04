@@ -153,7 +153,7 @@ const PREVIOUS_THEMES: &[(&str, &str)] = &[
     "accent_foreground": "#ffffff",
     "ring": "#000000",
     "working": "#808000",
-    "waiting": "#a0a060",
+    "background-waiting": "#a0a060",
     "blocked": "#ff0000",
     "done": "#0000ff",
     "idle": "#808080",
@@ -347,8 +347,8 @@ fn resolve(p: &Palette, overrides: &BTreeMap<String, String>) -> Theme {
         ("selection", hex(p.selection)),
         ("cursor", hex(p.cursor.unwrap_or(p.foreground))),
         ("working", hex(working)),
-        // Waiting: working's color, faded toward the background (busy, but not on its own turn).
-        ("waiting", hex(mix(bg, working, 0.55))),
+        // Background-waiting: working's color, faded toward the background (busy, but not on its own turn).
+        ("background-waiting", hex(mix(bg, working, 0.55))),
         ("blocked", hex(blocked)),
         ("done", hex(done)),
         ("idle", hex(mix(bg, fg, 0.38))),

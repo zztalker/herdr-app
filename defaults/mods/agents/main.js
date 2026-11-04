@@ -39,7 +39,7 @@ function title(tab, l) {
   const telling = live && live !== prog && !/^[~/]|^[A-Za-z]:\\/.test(live) && !live.includes("@") && live.toLowerCase() !== l?.program?.key;
   return (tab.name === prog || !tab.named) && telling ? live : tab.name;
 }
-const RANK = { blocked: 5, done: 4, working: 3, waiting: 2, idle: 1 };
+const RANK = { blocked: 5, done: 4, working: 3, "background-waiting": 2, idle: 1 };
 // A sub-agent without a pane isn't in agents(): its raw word, error counting as
 // blocked. It's never done: it reports to its parent, and the parent's done is the news.
 const kidStatus = (k, listed) => {
@@ -51,8 +51,8 @@ const SORTS = [
   { id: "grouped", label: "Grouped by space", icon: "layers" },
 ];
 const sortOf = () => SORTS.find((s) => s.id === shared("agents.sort")) ?? SORTS[0];
-const SECTION = { 5: "Needs you", 4: "Done", 3: "Working", 2: "Waiting", 1: "Idle" };
-const SECTION_STATUS = { 5: "blocked", 4: "done", 3: "working", 2: "waiting" };
+const SECTION = { 5: "Needs you", 4: "Done", 3: "Working", 2: "Background waiting", 1: "Idle" };
+const SECTION_STATUS = { 5: "blocked", 4: "done", 3: "working", 2: "background-waiting" };
 
 function duration(ms) {
   const m = Math.floor(ms / 60000);
@@ -207,8 +207,8 @@ export default class Agents extends View {
   status(t, a, compact = false) {
     const color = t[a.status] ?? t.dim;
     if (a.status === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.working).spin(900);
-    // Waiting on its own background work: the spinner, slow and faded.
-    if (a.status === "waiting") return svg("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.waiting ?? t.working).spin(2400);
+    // Background-waiting: the spinner, slow and faded.
+    if (a.status === "background-waiting") return svg("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t["background-waiting"] ?? t.working).spin(2400);
     if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(10.5).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
     if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you");
     // Idle: a ring; done: a dot.

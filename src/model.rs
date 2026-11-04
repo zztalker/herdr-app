@@ -58,7 +58,7 @@ pub enum Alert {
 #[derive(Clone, Debug, Default)]
 pub struct Agent {
     /// The program's 7501 word (working, idle, done, blocked, error), if it reports,
-    /// or `waiting` (see `effective_word`).
+    /// or `background-waiting` (see `effective_word`).
     pub word: Option<String>,
     /// The agent's name from its 7501 report (`app`), e.g. "claude-code".
     pub app: Option<String>,
@@ -89,20 +89,20 @@ pub struct Model {
     pub folder_info: HashMap<String, FolderInfo>,
 }
 
-/// Herdr's attention priority: blocked > done > working > waiting > idle > nothing.
+/// Herdr's attention priority: blocked > done > working > background-waiting > idle > nothing.
 pub fn priority(status: Option<&str>) -> u8 {
     match status {
         Some("blocked") => 5,
         Some("done") => 4,
         Some("working") => 3,
-        Some("waiting") => 2,
+        Some("background-waiting") => 2,
         Some("idle") => 1,
         _ => 0,
     }
 }
 
 /// The word Herdr goes by: the program's own (7501 root record), except that a
-/// program at rest (idle or done) with a record still `working` is `waiting`:
+/// program at rest (idle or done) with a record still `working` is `background-waiting`:
 /// its turn ended, but background work it reports on (a shell, a monitor, a
 /// sub-agent) has not, and it will wake up on its own.
 pub fn effective_word(word: Option<&str>, records: Option<&serde_json::Value>) -> Option<String> {
@@ -110,7 +110,7 @@ pub fn effective_word(word: Option<&str>, records: Option<&serde_json::Value>) -
     let background = records
         .and_then(serde_json::Value::as_object)
         .is_some_and(|r| r.values().any(|rec| rec.get("state").and_then(serde_json::Value::as_str) == Some("working")));
-    if at_rest && background { Some("waiting".into()) } else { word.map(str::to_owned) }
+    if at_rest && background { Some("background-waiting".into()) } else { word.map(str::to_owned) }
 }
 
 impl Tab {
@@ -455,9 +455,9 @@ impl Model {
         if a.word == word {
             return false;
         }
-        let was_busy = matches!(a.word.as_deref(), Some("working" | "blocked" | "waiting"));
+        let was_busy = matches!(a.word.as_deref(), Some("working" | "blocked" | "background-waiting"));
         match word.as_deref() {
-            Some("working" | "blocked" | "waiting") => a.seen = true,
+            Some("working" | "blocked" | "background-waiting") => a.seen = true,
             // A finish you didn't watch is "done" until you look at it.
             Some(_) if was_busy => a.seen = looking,
             _ => {}
@@ -473,7 +473,7 @@ impl Model {
     /// alerts; finishing alerts only if the person wasn't looking.
     pub fn alert(prev: Option<&str>, new: Option<&str>, looking: bool) -> Option<Alert> {
         let blocked = |w: Option<&str>| matches!(w, Some("blocked" | "error"));
-        let busy = |w: Option<&str>| matches!(w, Some("working" | "blocked" | "error" | "waiting"));
+        let busy = |w: Option<&str>| matches!(w, Some("working" | "blocked" | "error" | "background-waiting"));
         if blocked(new) && !blocked(prev) {
             Some(Alert::Blocked)
         } else if busy(prev) && new.is_some() && !busy(new) && !looking {
@@ -520,23 +520,23 @@ impl Model {
     /// seeing this turn now would hide that finish from every client.
     pub fn turn_to_share(&self, address: &str) -> Option<u64> {
         let a = self.agents.get(address)?;
-        let shareable = a.word.as_deref().is_some_and(|w| w != "waiting");
+        let shareable = a.word.as_deref().is_some_and(|w| w != "background-waiting");
         (shareable && a.seen_turn.is_none_or(|s| s < a.turn)).then_some(a.turn)
     }
 
     /// Whether a held done alert still holds: the agent is at rest, not
-    /// working, waiting or needing the person again.
+    /// working, background-waiting or needing the person again.
     pub fn still_done(&self, address: &str) -> bool {
-        self.agents.get(address).and_then(|a| a.word.as_deref()).is_some_and(|w| !matches!(w, "working" | "waiting" | "blocked" | "error"))
+        self.agents.get(address).and_then(|a| a.word.as_deref()).is_some_and(|w| !matches!(w, "working" | "background-waiting" | "blocked" | "error"))
     }
 
-    /// What the UI shows: working, blocked, waiting (at rest, background work
+    /// What the UI shows: working, blocked, background-waiting (at rest, background work
     /// running), done (finished, unseen), idle, or None (not an agent).
     pub fn status(&self, address: &str) -> Option<&'static str> {
         let a = self.agents.get(address)?;
         Some(match a.word.as_deref()? {
             "working" => "working",
-            "waiting" => "waiting",
+            "background-waiting" => "background-waiting",
             "blocked" | "error" => "blocked",
             _ if a.seen_turn.map_or(!a.seen, |s| a.turn > s) => "done",
             _ => "idle",
@@ -692,8 +692,8 @@ mod tests {
         let records = serde_json::json!({"bg": {"state": "working"}, "tests": {"state": "done"}});
         let finished = serde_json::json!({"bg": {"state": "done"}});
         let word = |w: Option<&str>, r: &serde_json::Value| effective_word(w, Some(r));
-        assert_eq!(word(Some("done"), &records).as_deref(), Some("waiting"));
-        assert_eq!(word(Some("idle"), &records).as_deref(), Some("waiting"));
+        assert_eq!(word(Some("done"), &records).as_deref(), Some("background-waiting"));
+        assert_eq!(word(Some("idle"), &records).as_deref(), Some("background-waiting"));
         // Its own turn, or needing you, says more than its background work.
         assert_eq!(word(Some("working"), &records).as_deref(), Some("working"));
         assert_eq!(word(Some("blocked"), &records).as_deref(), Some("blocked"));
@@ -706,20 +706,20 @@ mod tests {
     #[test]
     fn waiting_is_not_a_finish_until_its_background_work_ends() {
         let alert = Model::alert;
-        assert_eq!(alert(Some("working"), Some("waiting"), false), None);
-        assert_eq!(alert(Some("waiting"), Some("working"), false), None);
-        assert_eq!(alert(Some("waiting"), Some("done"), false), Some(Alert::Done));
-        assert_eq!(alert(Some("waiting"), Some("idle"), true), None);
-        assert_eq!(alert(Some("waiting"), Some("blocked"), false), Some(Alert::Blocked));
+        assert_eq!(alert(Some("working"), Some("background-waiting"), false), None);
+        assert_eq!(alert(Some("background-waiting"), Some("working"), false), None);
+        assert_eq!(alert(Some("background-waiting"), Some("done"), false), Some(Alert::Done));
+        assert_eq!(alert(Some("background-waiting"), Some("idle"), true), None);
+        assert_eq!(alert(Some("background-waiting"), Some("blocked"), false), Some(Alert::Blocked));
 
         let mut m = model_with_one();
         m.set_word("t1", Some("working".into()), None, false);
-        m.set_word("t1", Some("waiting".into()), None, false);
-        assert_eq!(m.status("t1"), Some("waiting"), "not done while its background work runs");
-        assert_eq!(m.rollup(&m.all_addresses()), Some("waiting"));
+        m.set_word("t1", Some("background-waiting".into()), None, false);
+        assert_eq!(m.status("t1"), Some("background-waiting"), "not done while its background work runs");
+        assert_eq!(m.rollup(&m.all_addresses()), Some("background-waiting"));
         m.set_word("t1", Some("done".into()), None, false);
         assert_eq!(m.status("t1"), Some("done"), "unseen once it really finished");
-        assert!(priority(Some("working")) > priority(Some("waiting")) && priority(Some("waiting")) > priority(Some("idle")));
+        assert!(priority(Some("working")) > priority(Some("background-waiting")) && priority(Some("background-waiting")) > priority(Some("idle")));
     }
 
     #[test]
@@ -728,7 +728,7 @@ mod tests {
         m.set_word("t1", Some("working".into()), None, false);
         m.set_turn("t1", 0, Some(0));
         // Its turn ends (core turn 1) with background work still running.
-        m.set_word("t1", Some("waiting".into()), None, true);
+        m.set_word("t1", Some("background-waiting".into()), None, true);
         m.set_turn("t1", 1, Some(0));
         assert_eq!(m.turn_to_share("t1"), None, "watching it wait is not seeing it finish");
         // The work ends while the person is elsewhere: unread, on every client.
@@ -746,12 +746,12 @@ mod tests {
         // Either order of Claude's own done and the hook's background record.
         // Record first: never a finish.
         m.set_word("t1", Some("working".into()), None, false);
-        assert_eq!(Model::alert(Some("working"), Some("waiting"), false), None);
+        assert_eq!(Model::alert(Some("working"), Some("background-waiting"), false), None);
         // Done first: the alert is held, and dropped once the record turns it into waiting.
         assert_eq!(Model::alert(Some("working"), Some("done"), false), Some(Alert::Done));
         m.set_word("t1", Some("done".into()), None, false);
         assert!(m.still_done("t1"));
-        m.set_word("t1", Some("waiting".into()), None, false);
+        m.set_word("t1", Some("background-waiting".into()), None, false);
         assert!(!m.still_done("t1"), "it went on waiting: no finish to announce");
         // The real finish rings after the same wait.
         m.set_word("t1", Some("done".into()), None, false);
